@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -49,15 +50,34 @@ type NetworkClient struct {
 }
 
 func (c *Client) ListClients(ctx context.Context) ([]NetworkClient, error) {
-	var response ListClientsResponse
-	if err := c.doRequest(ctx, "GET", "/proxy/network/integration/v1/sites/"+c.SiteID+"/clients", &response); err != nil {
-		return nil, err
+	allClients := []NetworkClient{}
+	limit := 50
+	offset := 0
+
+	for {
+		endpoint := fmt.Sprintf("/proxy/network/integration/v1/sites/%s/clients", c.SiteID)
+		params := url.Values{}
+		params.Set("limit", fmt.Sprintf("%d", limit))
+		params.Set("offset", fmt.Sprintf("%d", offset))
+
+		var response ListClientsResponse
+		if err := c.doRequest(ctx, "GET", endpoint, params, &response); err != nil {
+			return nil, fmt.Errorf("request failed at offset %d: %w", offset, err)
+		}
+
+		allClients = append(allClients, response.Data...)
+
+		if len(allClients) >= response.TotalCount || len(response.Data) == 0 {
+			break
+		}
+
+		offset += limit
 	}
 
-	return response.Data, nil
+	return allClients, nil
 }
 
-func (c *Client) doRequest(ctx context.Context, method string, path string, out any) error {
+func (c *Client) doRequest(ctx context.Context, method string, path string, params url.Values, out any) error {
 	fullURL := fmt.Sprintf("%s%s", c.BaseURL, path)
 
 	req, err := http.NewRequest(method, fullURL, nil)
