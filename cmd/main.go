@@ -2,44 +2,67 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 
-	"github.com/davidseybold/unifi-technitium-syncer/syncer"
-	"github.com/davidseybold/unifi-technitium-syncer/technitium"
-	"github.com/davidseybold/unifi-technitium-syncer/unifi"
+	"github.com/caarlos0/env/v11"
 	"github.com/google/uuid"
-	"github.com/spf13/viper"
+	"github.com/joho/godotenv"
+
+	"github.com/davidseybold/unifi-technitium-sync/syncer"
+	"github.com/davidseybold/unifi-technitium-sync/technitium"
+	"github.com/davidseybold/unifi-technitium-sync/unifi"
 )
 
-type Config struct {
-	UnifiAPIURL        string `mapstructure:"UNIFI_API_URL"`
-	UnifiAPIKey        string `mapstructure:"UNIFI_API_KEY"`
-	UnifiSiteID        string `mapstructure:"UNIFI_SITE_ID"`
-	TechnitiumAPIURL   string `mapstructure:"TECHNITIUM_API_URL"`
-	TechnitiumAPIToken string `mapstructure:"TECHNITIUM_API_TOKEN"`
-	SyncZone           string `mapstructure:"SYNC_ZONE"`
+type config struct {
+	UnifiAPIURL        string `env:"UNIFI_API_URL"`
+	UnifiAPIKey        string `env:"UNIFI_API_KEY"`
+	UnifiSiteID        string `env:"UNIFI_SITE_ID"`
+	TechnitiumAPIURL   string `env:"TECHNITIUM_API_URL"`
+	TechnitiumAPIToken string `env:"TECHNITIUM_API_TOKEN"`
+	SyncZone           string `env:"SYNC_ZONE"`
 }
 
-func LoadConfig() (config Config, err error) {
-	viper.AddConfigPath(".")
-	viper.SetConfigName("unifi-technitium-sync")
-	viper.SetConfigType("env")
+func (c *config) String() string {
+	return fmt.Sprintf("UnifiAPIURL: %s, TechnitiumAPIURL: %s, SyncZone: %s", c.UnifiAPIURL, c.TechnitiumAPIURL, c.SyncZone)
+}
 
-	viper.AutomaticEnv()
-
-	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-
-	if err := viper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return config, err
-		}
+func (c *config) Validate() error {
+	if c.UnifiAPIURL == "" {
+		return errors.New("UNIFI_API_URL is required")
 	}
 
-	err = viper.Unmarshal(&config)
-	return config, err
+	if c.UnifiAPIKey == "" {
+		return errors.New("UNIFI_API_KEY is required")
+	}
+
+	if c.UnifiSiteID == "" {
+		return errors.New("UNIFI_SITE_ID is required")
+	}
+
+	if c.TechnitiumAPIURL == "" {
+		return errors.New("TECHNITIUM_API_URL is required")
+	}
+
+	if c.TechnitiumAPIToken == "" {
+		return errors.New("TECHNITIUM_API_TOKEN is required")
+	}
+
+	if c.SyncZone == "" {
+		return errors.New("SYNC_ZONE is required")
+	}
+
+	return nil
+}
+
+func LoadConfig() (config, error) {
+	_ = godotenv.Load()
+
+	var c config
+	err := env.Parse(&c)
+	return c, err
 }
 
 func main() {
@@ -49,17 +72,25 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	config, err := LoadConfig()
-	if err != nil {
-		return fmt.Errorf("error loading config: %v", err)
-	}
 
 	runId := uuid.New().String()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	logger = logger.With("runId", runId)
+	config, err := LoadConfig()
+	if err != nil {
+		return fmt.Errorf("error loading config: %v", err)
+	}
 
-	logger.Info("Starting sync", "unifiAPIURL", config.UnifiAPIURL, "technitiumAPIURL", config.TechnitiumAPIURL)
+	fmt.Printf("Config: %+v\n", config)
+
+	if err := config.Validate(); err != nil {
+		return fmt.Errorf("error validating config: %v", err)
+	}
+
+	logger.Info("Starting sync", "config", config.String())
+
+	return nil
 
 	unifiClient := unifi.NewClient(config.UnifiAPIURL, config.UnifiAPIKey, config.UnifiSiteID)
 	technitiumClient := technitium.NewClient(config.TechnitiumAPIURL, config.TechnitiumAPIToken)

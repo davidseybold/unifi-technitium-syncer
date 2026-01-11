@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/davidseybold/unifi-technitium-syncer/technitium"
-	"github.com/davidseybold/unifi-technitium-syncer/unifi"
+	"github.com/davidseybold/unifi-technitium-sync/technitium"
+	"github.com/davidseybold/unifi-technitium-sync/unifi"
 )
 
 type Syncer struct {
