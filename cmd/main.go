@@ -24,7 +24,7 @@ type config struct {
 	UnifiSiteID string `env:"UNIFI_SITE_ID"`
 
 	SyncZone string `env:"SYNC_ZONE"`
-	StateDir string `env:"STATE_DIR" envDefault:"/var/lib/unifi-sync"`
+	StateDir string `env:"STATE_DIR" envDefault:"/var/lib/unifi-dns-sync"`
 
 	DNSProvider string `env:"DNS_PROVIDER"`
 }
