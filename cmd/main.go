@@ -77,20 +77,17 @@ func run(ctx context.Context) error {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	logger = logger.With("runId", runId)
+
 	config, err := LoadConfig()
 	if err != nil {
 		return fmt.Errorf("error loading config: %v", err)
 	}
-
-	fmt.Printf("Config: %+v\n", config)
 
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("error validating config: %v", err)
 	}
 
 	logger.Info("Starting sync", "config", config.String())
-
-	return nil
 
 	unifiClient := unifi.NewClient(config.UnifiAPIURL, config.UnifiAPIKey, config.UnifiSiteID)
 	technitiumClient := technitium.NewClient(config.TechnitiumAPIURL, config.TechnitiumAPIToken)
