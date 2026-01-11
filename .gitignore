@@ -1,0 +1,33 @@
+
+# --- Binaries ---
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+build/
+
+# --- Configuration & Secrets ---
+*.env
+unifi-technitium-sync
+
+# --- Dependencies ---
+vendor/
+
+# --- Testing & Coverage ---
+*.test
+*.out
+coverage.txt
+
+# --- IDEs & Editors ---
+# JetBrains (GoLand)
+.idea/
+*.iwb
+# VS Code
+.vscode/
+# Vim
+*.swp
+*~
+
+# --- System ---
+.DS_Store
