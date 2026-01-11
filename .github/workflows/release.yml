@@ -21,10 +21,10 @@ jobs:
 
       - name: Build Binary
         run: |
-          GOOS=linux GOARCH=amd64 go build -o unifi-technitium-sync-linux-amd64 cmd/main.go
+          GOOS=linux GOARCH=amd64 go build -o unifi-dns-sync-linux-amd64 cmd/main.go
 
       - name: Create Release and Upload
         uses: softprops/action-gh-release@v2
         with:
-          files: unifi-technitium-sync-linux-amd64
+          files: unifi-dns-sync-linux-amd64
         

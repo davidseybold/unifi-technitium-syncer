@@ -6,29 +6,27 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/caarlos0/env/v11"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 
-	"github.com/davidseybold/unifi-technitium-sync/syncer"
-	"github.com/davidseybold/unifi-technitium-sync/technitium"
-	"github.com/davidseybold/unifi-technitium-sync/unifi"
+	"github.com/davidseybold/unifi-dns-sync/dnsprovider/technitium"
+	"github.com/davidseybold/unifi-dns-sync/syncer"
+	"github.com/davidseybold/unifi-dns-sync/unifi"
 )
 
 type config struct {
-	UnifiAPIURL        string `env:"UNIFI_API_URL"`
-	UnifiAPIKey        string `env:"UNIFI_API_KEY"`
-	UnifiSiteID        string `env:"UNIFI_SITE_ID"`
-	TechnitiumAPIURL   string `env:"TECHNITIUM_API_URL"`
-	TechnitiumAPIToken string `env:"TECHNITIUM_API_TOKEN"`
-	SyncZone           string `env:"SYNC_ZONE"`
-	StateDir           string `env:"STATE_DIR" envDefault:"/var/lib/unifi-technitium-sync"`
-}
+	UnifiAPIURL string `env:"UNIFI_API_URL"`
+	UnifiAPIKey string `env:"UNIFI_API_KEY"`
+	UnifiSiteID string `env:"UNIFI_SITE_ID"`
 
-func (c *config) String() string {
-	return fmt.Sprintf("UnifiAPIURL: %s, TechnitiumAPIURL: %s, SyncZone: %s", c.UnifiAPIURL, c.TechnitiumAPIURL, c.SyncZone)
+	SyncZone string `env:"SYNC_ZONE"`
+	StateDir string `env:"STATE_DIR" envDefault:"/var/lib/unifi-sync"`
+
+	DNSProvider string `env:"DNS_PROVIDER"`
 }
 
 func (c *config) Validate() error {
@@ -44,12 +42,8 @@ func (c *config) Validate() error {
 		return errors.New("UNIFI_SITE_ID is required")
 	}
 
-	if c.TechnitiumAPIURL == "" {
-		return errors.New("TECHNITIUM_API_URL is required")
-	}
-
-	if c.TechnitiumAPIToken == "" {
-		return errors.New("TECHNITIUM_API_TOKEN is required")
+	if c.DNSProvider == "" {
+		return errors.New("DNS_PROVIDER is required")
 	}
 
 	if c.SyncZone == "" {
@@ -73,6 +67,16 @@ func main() {
 	}
 }
 
+func getProvider(name string) (syncer.DNSProvider, error) {
+	switch name {
+	case "technitium":
+		p, err := technitium.New()
+		return p, err
+	default:
+		return nil, fmt.Errorf("unknown provider: %s", name)
+	}
+}
+
 func run(ctx context.Context) error {
 
 	runId := uuid.New().String()
@@ -89,10 +93,14 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("error validating config: %v", err)
 	}
 
-	logger.Info("Starting sync", "config", config.String())
+	logger.Info("Starting sync", "provider", config.DNSProvider)
 
 	unifiClient := unifi.NewClient(config.UnifiAPIURL, config.UnifiAPIKey, config.UnifiSiteID)
-	technitiumClient := technitium.NewClient(config.TechnitiumAPIURL, config.TechnitiumAPIToken)
+
+	provider, err := getProvider(strings.ToLower(config.DNSProvider))
+	if err != nil {
+		return fmt.Errorf("error creating provider: %v", err)
+	}
 
 	syncerCfg := syncer.Config{
 		SyncZone:       config.SyncZone,
@@ -100,7 +108,7 @@ func run(ctx context.Context) error {
 		ClientWaitTime: time.Hour,
 	}
 
-	s := syncer.New(unifiClient, technitiumClient, syncerCfg, logger)
+	s := syncer.New(unifiClient, provider, syncerCfg, logger)
 
 	result, err := s.Run(ctx)
 	if err != nil {

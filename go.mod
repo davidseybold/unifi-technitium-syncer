@@ -1,4 +1,4 @@
-module github.com/davidseybold/unifi-technitium-sync
+module github.com/davidseybold/unifi-sync
 
 go 1.24.2
 

@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/caarlos0/env/v11"
+
+	"github.com/davidseybold/unifi-dns-sync/dnsprovider"
 )
 
-var (
-	ErrZoneNotFound = errors.New("zone not found")
-)
+var ()
 
 // Client holds the configuration for the API
 type Client struct {
@@ -22,63 +24,49 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
-// BaseResponse covers the standard status fields returned by all API calls
-type APIResponse[T any] struct {
-	Response     T      `json:"response"`
-	Status       string `json:"status"`
-	ErrorMessage string `json:"errorMessage,omitempty"`
+type config struct {
+	BaseURL  string `env:"TECHNITIUM_API_URL"`
+	APIToken string `env:"TECHNITIUM_API_TOKEN"`
 }
 
-type ListZonesResponse struct {
-	Zones []DNSZone `json:"zones"`
-}
-
-type DNSZone struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
-}
-
-type ListRecordsResponse struct {
-	Records []Record `json:"records"`
-}
-
-type Record struct {
-	Type     string `json:"type"`
-	TTL      int    `json:"ttl"`
-	Name     string `json:"name"`
-	Comments string `json:"comments"`
-	RData    RData  `json:"rData"`
-}
-
-type RData struct {
-	IPAddress *string `json:"ipAddress"`
-}
-
-func NewClient(baseURL, token string) *Client {
-	return &Client{
-		BaseURL: baseURL,
-		Token:   token,
-		HTTPClient: &http.Client{
-			Timeout: 10 * time.Second,
-		},
+func (c *config) Validate() error {
+	if c.BaseURL == "" {
+		return errors.New("TECHNITIUM_API_URL is required for technitium provider")
 	}
-}
 
-// CreateZone creates a new primary zone
-func (c *Client) CreateZone(ctx context.Context, zoneName string) error {
-	params := url.Values{}
-	params.Add("zone", zoneName)
-	params.Add("type", "Primary") // Defaulting to Primary for this example
-
-	_, err := doRequest[struct{}](ctx, c, "/api/zones/create", params)
-	if err != nil {
-		return err
+	if c.APIToken == "" {
+		return errors.New("TECHNITIUM_API_TOKEN is required for technitium provider")
 	}
 
 	return nil
 }
 
-func (c *Client) ListZones(ctx context.Context) ([]DNSZone, error) {
+func loadConfig() (config, error) {
+	var c config
+	err := env.Parse(&c)
+	return c, err
+}
+
+func New() (*Client, error) {
+	cfg, err := loadConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
+	return &Client{
+		BaseURL: cfg.BaseURL,
+		Token:   cfg.APIToken,
+		HTTPClient: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+	}, nil
+}
+
+func (c *Client) listZones(ctx context.Context) ([]Zone, error) {
 
 	response, err := doRequest[ListZonesResponse](ctx, c, "/api/zones/list", url.Values{})
 	if err != nil {
@@ -89,33 +77,32 @@ func (c *Client) ListZones(ctx context.Context) ([]DNSZone, error) {
 }
 
 // GetZone fetches details for a specific zone
-func (c *Client) GetZone(ctx context.Context, zoneName string) (*DNSZone, error) {
-	zones, err := c.ListZones(ctx)
+func (c *Client) GetZone(ctx context.Context, zoneName string) (dnsprovider.Zone, error) {
+	zones, err := c.listZones(ctx)
 	if err != nil {
-		return nil, err
+		return dnsprovider.Zone{}, err
 	}
 
 	for i := range zones {
 		if zones[i].Name == zoneName {
-			return &zones[i], nil
+			return zones[i].ToDNSProviderZone(), nil
 		}
 	}
 
-	return nil, ErrZoneNotFound
+	return dnsprovider.Zone{}, dnsprovider.ErrZoneNotFound
 }
 
-// // AddRecord adds a DNS record to a zone
-func (c *Client) AddRecord(ctx context.Context, zone, domain, ipAddress string, ttl int, comments string) error {
+func (c *Client) UpsertRecord(ctx context.Context, zone string, record dnsprovider.Record) error {
 	params := url.Values{}
 	params.Add("zone", zone)
-	params.Add("domain", domain)
-	params.Add("type", "A")
-	params.Add("ttl", fmt.Sprintf("%d", ttl))
-	params.Add("comments", comments)
+	params.Add("domain", record.Name)
+	params.Add("type", record.Type)
+	params.Add("ttl", fmt.Sprintf("%d", record.TTL))
+	params.Add("comments", record.Comments)
 	params.Add("ptr", "true")
 	params.Add("createPtrZone", "true")
 	params.Add("overwrite", "true")
-	params.Add("ipAddress", ipAddress)
+	params.Add("ipAddress", record.IPAddress)
 
 	_, err := doRequest[struct{}](ctx, c, "/api/zones/records/add", params)
 
@@ -123,7 +110,7 @@ func (c *Client) AddRecord(ctx context.Context, zone, domain, ipAddress string, 
 }
 
 // ListRecords returns all records for a zone
-func (c *Client) ListRecords(ctx context.Context, zone string) ([]Record, error) {
+func (c *Client) ListRecords(ctx context.Context, zone string) ([]dnsprovider.Record, error) {
 	params := url.Values{}
 	params.Add("zone", zone)
 	params.Add("domain", zone)
@@ -134,19 +121,21 @@ func (c *Client) ListRecords(ctx context.Context, zone string) ([]Record, error)
 		return nil, err
 	}
 
-	return records.Records, nil
+	var result []dnsprovider.Record
+	for i := range records.Records {
+		result = append(result, records.Records[i].ToDNSProviderRecord())
+	}
+
+	return result, nil
 }
 
 // // DeleteRecord removes a record from a zone
-func (c *Client) DeleteRecord(ctx context.Context, zone, domain, recordType, value string) error {
+func (c *Client) DeleteRecord(ctx context.Context, zone string, record dnsprovider.Record) error {
 	params := url.Values{}
 	params.Add("zone", zone)
-	params.Add("domain", domain)
-	params.Add("type", recordType)
-
-	if recordType == "A" {
-		params.Add("ipAddress", value)
-	}
+	params.Add("domain", record.Name)
+	params.Add("type", record.Type)
+	params.Add("ipAddress", record.IPAddress)
 
 	_, err := doRequest[struct{}](ctx, c, "/api/zones/records/delete", params)
 

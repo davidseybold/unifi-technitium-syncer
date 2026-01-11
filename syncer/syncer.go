@@ -10,15 +10,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/davidseybold/unifi-technitium-sync/technitium"
-	"github.com/davidseybold/unifi-technitium-sync/unifi"
+	"github.com/davidseybold/unifi-dns-sync/dnsprovider"
+	"github.com/davidseybold/unifi-dns-sync/unifi"
 )
 
+type DNSProvider interface {
+	GetZone(ctx context.Context, zone string) (dnsprovider.Zone, error)
+	ListRecords(ctx context.Context, zone string) ([]dnsprovider.Record, error)
+	UpsertRecord(ctx context.Context, zone string, record dnsprovider.Record) error
+	DeleteRecord(ctx context.Context, zone string, record dnsprovider.Record) error
+}
+
 type Syncer struct {
-	uc     *unifi.Client
-	tc     *technitium.Client
-	config Config
-	logger *slog.Logger
+	uc       *unifi.Client
+	provider DNSProvider
+	config   Config
+	logger   *slog.Logger
 }
 
 type Config struct {
@@ -27,12 +34,12 @@ type Config struct {
 	StateDir       string
 }
 
-func New(uc *unifi.Client, tc *technitium.Client, config Config, logger *slog.Logger) *Syncer {
+func New(uc *unifi.Client, provider DNSProvider, config Config, logger *slog.Logger) *Syncer {
 	return &Syncer{
-		uc:     uc,
-		tc:     tc,
-		config: config,
-		logger: logger,
+		uc:       uc,
+		provider: provider,
+		config:   config,
+		logger:   logger,
 	}
 }
 
@@ -46,7 +53,7 @@ func (s *Syncer) Run(ctx context.Context) (*SyncResult, error) {
 		s.logger = slog.New(slog.DiscardHandler)
 	}
 
-	_, err := s.tc.GetZone(ctx, s.config.SyncZone)
+	_, err := s.provider.GetZone(ctx, s.config.SyncZone)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate sync zone exists: %v", err)
 	}
@@ -89,8 +96,8 @@ func (s *Syncer) Run(ctx context.Context) (*SyncResult, error) {
 }
 
 type changes struct {
-	Add    []technitium.Record
-	Delete []technitium.Record
+	Add    []dnsprovider.Record
+	Delete []dnsprovider.Record
 }
 
 type SyncResult struct {
@@ -152,18 +159,18 @@ func (s *Syncer) getStateFileName() string {
 	return s.config.StateDir + "/state.json"
 }
 
-func (s *Syncer) convertClientsToRecords(ctx context.Context, clients []client) (map[string]technitium.Record, error) {
-	clientRecords := map[string]technitium.Record{}
+func (s *Syncer) convertClientsToRecords(ctx context.Context, clients []client) (map[string]dnsprovider.Record, error) {
+	clientRecords := map[string]dnsprovider.Record{}
 	for _, client := range clients {
 		sanitizedUnifiName := sanitizeDNS(client.Name)
 		name := fmt.Sprintf("%s.%s", sanitizedUnifiName, s.config.SyncZone)
 
-		clientRecords[name] = technitium.Record{
-			Name:     name,
-			Type:     "A",
-			TTL:      3600,
-			Comments: client.MACAddress,
-			RData:    technitium.RData{IPAddress: &client.IPAddress},
+		clientRecords[name] = dnsprovider.Record{
+			Name:      name,
+			Type:      "A",
+			TTL:       3600,
+			Comments:  client.MACAddress,
+			IPAddress: client.IPAddress,
 		}
 	}
 
@@ -201,8 +208,8 @@ func (s *Syncer) updateState(currentState *state, currentClients []unifi.Network
 	return &state{Clients: newClients}, nil
 }
 
-func (s *Syncer) getExistingRecords(ctx context.Context) ([]technitium.Record, error) {
-	records, err := s.tc.ListRecords(ctx, s.config.SyncZone)
+func (s *Syncer) getExistingRecords(ctx context.Context) ([]dnsprovider.Record, error) {
+	records, err := s.provider.ListRecords(ctx, s.config.SyncZone)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list existing records: %v", err)
 	}
@@ -212,9 +219,9 @@ func (s *Syncer) getExistingRecords(ctx context.Context) ([]technitium.Record, e
 	return aRecords, nil
 }
 
-func (s *Syncer) calculateChanges(existingRecords []technitium.Record, clientRecords map[string]technitium.Record) changes {
-	addRecords := []technitium.Record{}
-	deleteRecords := []technitium.Record{}
+func (s *Syncer) calculateChanges(existingRecords []dnsprovider.Record, clientRecords map[string]dnsprovider.Record) changes {
+	addRecords := []dnsprovider.Record{}
+	deleteRecords := []dnsprovider.Record{}
 
 	for _, record := range existingRecords {
 		clientRecord, ok := clientRecords[record.Name]
@@ -237,7 +244,7 @@ func (s *Syncer) processChanges(ctx context.Context, c changes) SyncResult {
 	result := SyncResult{}
 
 	for _, r := range c.Delete {
-		err := s.tc.DeleteRecord(ctx, s.config.SyncZone, r.Name, r.Type, *r.RData.IPAddress)
+		err := s.provider.DeleteRecord(ctx, s.config.SyncZone, r)
 		if err != nil {
 			s.logger.Error("error deleting record", "record", r.Name, "error", err)
 			result.DeleteFailed++
@@ -248,7 +255,7 @@ func (s *Syncer) processChanges(ctx context.Context, c changes) SyncResult {
 	}
 
 	for _, r := range c.Add {
-		err := s.tc.AddRecord(ctx, s.config.SyncZone, r.Name, *r.RData.IPAddress, r.TTL, r.Comments)
+		err := s.provider.UpsertRecord(ctx, s.config.SyncZone, r)
 		if err != nil {
 			s.logger.Error("error upserting record", "record", r.Name, "error", err)
 			result.AddFailed++
@@ -261,8 +268,8 @@ func (s *Syncer) processChanges(ctx context.Context, c changes) SyncResult {
 	return result
 }
 
-func filterTechnitiumRecordsByType(records []technitium.Record, typ string) []technitium.Record {
-	var filtered []technitium.Record
+func filterTechnitiumRecordsByType(records []dnsprovider.Record, typ string) []dnsprovider.Record {
+	var filtered []dnsprovider.Record
 	for _, record := range records {
 		if record.Type == typ {
 			filtered = append(filtered, record)
@@ -272,11 +279,11 @@ func filterTechnitiumRecordsByType(records []technitium.Record, typ string) []te
 	return filtered
 }
 
-func shouldUpdateRecord(existingRecord technitium.Record, clientRecord technitium.Record) bool {
-	if existingRecord.RData.IPAddress == nil || clientRecord.RData.IPAddress == nil {
+func shouldUpdateRecord(existingRecord dnsprovider.Record, clientRecord dnsprovider.Record) bool {
+	if existingRecord.IPAddress == "" || clientRecord.IPAddress == "" {
 		return true
 	}
-	return *existingRecord.RData.IPAddress != *clientRecord.RData.IPAddress
+	return existingRecord.IPAddress != clientRecord.IPAddress
 }
 
 func sanitizeDNS(input string) string {

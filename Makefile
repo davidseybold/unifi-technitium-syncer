@@ -1,4 +1,4 @@
-BINARY := unifi-technitium-sync
+BINARY := unifi-dns-sync
 PKG := ./...
 CMD := ./cmd
 DIST := dist
@@ -51,7 +51,7 @@ clean:
 .PHONY: dist
 dist:
 	@mkdir -p $(DIST)
-	GOOS=linux GOARCH=amd64 go build -o $(DIST)/unifi-technitium-sync-linux-amd64 $(CMD)
-	GOOS=linux GOARCH=arm64 go build -o $(DIST)/unifi-technitium-sync-linux-arm64 $(CMD)
-	GOOS=darwin GOARCH=arm64 go build -o $(DIST)/unifi-technitium-sync-darwin-arm64 $(CMD)
-	GOOS=darwin GOARCH=amd64 go build -o $(DIST)/unifi-technitium-sync-darwin-amd64 $(CMD)
+	GOOS=linux GOARCH=amd64 go build -o $(DIST)/unifi-dns-sync-linux-amd64 $(CMD)
+	GOOS=linux GOARCH=arm64 go build -o $(DIST)/unifi-dns-sync-linux-arm64 $(CMD)
+	GOOS=darwin GOARCH=arm64 go build -o $(DIST)/unifi-dns-sync-darwin-arm64 $(CMD)
+	GOOS=darwin GOARCH=amd64 go build -o $(DIST)/unifi-dns-sync-darwin-amd64 $(CMD)
